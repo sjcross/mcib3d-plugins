@@ -1,5 +1,14 @@
 package mcib_plugins;
 
+import java.awt.Checkbox;
+import java.awt.Font;
+import java.awt.TextField;
+import java.util.Date;
+import java.util.Vector;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
 import ij.IJ;
 import ij.ImagePlus;
 import ij.ImageStack;
@@ -9,9 +18,7 @@ import ij.measure.Calibration;
 import ij.plugin.Duplicator;
 import ij.plugin.filter.PlugInFilter;
 import ij.plugin.frame.Recorder;
-import ij.process.Blitter;
 import ij.process.ImageProcessor;
-import ij.process.StackProcessor;
 import mcib3d.image3d.ImageShort;
 import mcib3d.image3d.processing.FastFilters3D;
 import mcib3d.utils.CheckInstall;
@@ -20,11 +27,6 @@ import mcib_plugins.Filter3D.Filter3Dmax;
 import mcib_plugins.Filter3D.Filter3DmaxLocal;
 import mcib_plugins.Filter3D.Filter3Dmean;
 import mcib_plugins.Filter3D.Filter3Dmin;
-
-import java.awt.*;
-import java.util.Date;
-import java.util.Vector;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 3D filtering
@@ -36,9 +38,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class Fast_filters3D implements PlugInFilter, DialogListener {
 
     private int nbcpus;
+    private int nRows = 2;
+    private int nCols = 2;
     ImagePlus imp;
-    private String[] filters = new String[]{"Mean", "Median", "Minimum", "Maximum", "MaximumLocal", "TopHat", "OpenGray", "CloseGray", "Variance", "Sobel", "Adaptive"};
-    private String[] algos = new String[]{"Parallelized", "Isotropic"};
+    private String[] filters = new String[] { "Mean", "Median", "Minimum", "Maximum", "MaximumLocal", "TopHat",
+            "OpenGray", "CloseGray", "Variance", "Sobel", "Adaptive" };
+    private String[] algos = new String[] { "Parallelized", "Isotropic" };
     private int filter;
     private float voisx = 2;
     private float voisy = 2;
@@ -68,18 +73,21 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
         ImageStack stack = extract.getStack();
         int depth = stack.getBitDepth();
 
-
         if (Dialogue()) {
             // Macro
             if (Recorder.record) {
                 Recorder.setCommand(null);
-                Recorder.record("run", "3D Fast Filters\",\"filter=" + filters[filter] + " radius_x_pix=" + voisx + " radius_y_pix=" + voisy + " radius_z_pix=" + voisz + " Nb_cpus=" + nbcpus);
+                Recorder.record("run", "3D Fast Filters\",\"filter=" + filters[filter] + " radius_x_pix=" + voisx
+                        + " radius_y_pix=" + voisy + " radius_z_pix=" + voisz + " Nb_cpus=" + nbcpus);
                 if (debug) {
                     IJ.log("Performing 3D filter " + filters[filter] + " " + voisx + "x" + voisy + "x" + voisz);
                 }
             }
 
-            boolean ff = ((voisx == voisy) && (voisx == voisz) && ((filter == FastFilters3D.MEAN) || (filter == FastFilters3D.MIN) || (filter == FastFilters3D.MAX) || (filter == FastFilters3D.MAXLOCAL) || (filter == FastFilters3D.TOPHAT) || (filter == FastFilters3D.OPENGRAY) || (filter == FastFilters3D.CLOSEGRAY)));
+            boolean ff = ((voisx == voisy) && (voisx == voisz)
+                    && ((filter == FastFilters3D.MEAN) || (filter == FastFilters3D.MIN) || (filter == FastFilters3D.MAX)
+                            || (filter == FastFilters3D.MAXLOCAL) || (filter == FastFilters3D.TOPHAT)
+                            || (filter == FastFilters3D.OPENGRAY) || (filter == FastFilters3D.CLOSEGRAY)));
 
             Date t0 = new Date();
 
@@ -93,12 +101,12 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
                 if ((depth == 8) || (depth == 16)) {
                     res = FastFilters3D.filterIntImageStack(stack, filter, voisx, voisy, voisz, nbcpus, true);
                 } else if (imp.getBitDepth() == 32) {
-                    //if ((filter != FastFilters3D.SOBEL)) {
+                    // if ((filter != FastFilters3D.SOBEL)) {
                     res = FastFilters3D.filterFloatImageStack(stack, filter, voisx, voisy, voisz, nbcpus, true);
-//                    } else {
-//                        if (debug) {
-//                            IJ.log("Not implemented for 32-bits images");
-//                        }
+                    // } else {
+                    // if (debug) {
+                    // IJ.log("Not implemented for 32-bits images");
+                    // }
                     // }
                     // }
                 } else {
@@ -120,64 +128,136 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
     }
 
     private void FastFilter(ImagePlus in_image_j, int radius, String selected_filter) {
-        //read image
-        //ImagePlus in_image_j = IJ.getImage();
-        ImageStack instack = in_image_j.getStack();
-        Duplicator dup = new Duplicator();
-        final ImagePlus img = dup.run(in_image_j);
-        ImageStack orig = img.getStack();
-        ImageShort out3d = new ImageShort("out3d", instack.getWidth(), instack.getHeight(), instack.getSize());
-        ImageStack out_image = out3d.getImageStack();
+        // read image
+        // ImagePlus in_image_j = IJ.getImage();
+        ImageStack inStack = in_image_j.getStack();
+        ImageStack outStack = new ImageShort("out3d", inStack.getWidth(), inStack.getHeight(), inStack.getSize())
+                .getImageStack();
         int rad = radius;
-        int de = instack.getSize();
 
-        // Parallelisation DOES NOT WORK !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-        final AtomicInteger ai = new AtomicInteger(0);
-        //final int n_cpus = nbcpus;
-        final int n_cpus = 1;
-        final int dec = (int) Math.ceil((double) de / (double) n_cpus);
-        //Thread[] threads = ThreadUtil.createThreadArray(n_cpus);
+        ThreadPoolExecutor pool = new ThreadPoolExecutor(nbcpus, nbcpus, 0L, TimeUnit.MILLISECONDS,
+                new LinkedBlockingQueue<>());
 
-        //process filter
+        for (int row = 0; row < nRows; row++) {
+            for (int col = 0; col < nCols; col++) {
+                final int rowF = row;
+                final int colF = col;
+
+                Runnable task = () -> {
+                    ImageStack cropStack = getPutBlock(inStack, null, nRows, nCols, rowF, colF, rad);
+                    ImageStack tempOutStack = new ImageShort("outImage", cropStack.getWidth(), cropStack.getHeight(),
+                            cropStack.size()).getImageStack();
+                    processFilter(cropStack, tempOutStack, selected_filter, rad);
+                    getPutBlock(tempOutStack, outStack, nRows, nCols, rowF, colF, rad);
+                };
+                pool.submit(task);
+            }
+        }
+
+        pool.shutdown();
+        try {
+            pool.awaitTermination(Integer.MAX_VALUE, TimeUnit.DAYS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        ImagePlus out_plus = new ImagePlus(filters[filter], outStack);
+        out_plus.setCalibration(calibration);
+        out_plus.show();
+
+    }
+
+    synchronized public ImageStack getPutBlock(ImageStack instack, ImageStack outStack, int nRows, int nCols, int row,
+            int col, int rad) {
+        if (outStack == null) {
+            return getBlock(instack, nRows, nCols, row, col, rad);
+        } else {
+            putBlock(instack, outStack, nRows, nCols, row, col, rad);
+            return null;
+        }
+    }
+
+    synchronized public ImageStack getBlock(ImageStack instack, int nRows, int nCols, int row, int col, int rad) {
+        int width = instack.getWidth();
+        int height = instack.getHeight();
+        int nSlices = instack.size();
+
+        int blockWidth = (int) Math.round(width / nCols);
+        int blockHeight = (int) Math.round(height / nRows);
+
+        int borderN = row == 0 ? 0 : rad;
+        int borderS = row == (nRows - 1) ? 0 : rad;
+        int borderW = col == 0 ? 0 : rad;
+        int borderE = col == (nCols - 1) ? 0 : rad;
+
+        int x = (col * blockWidth) - borderW;
+        int y = (row * blockHeight) - borderN;
+        int w = blockWidth + borderW + borderE;
+        int h = blockHeight + borderN + borderS;
+
+        // Padding to edge for final row or column
+        if (row == nRows - 1)
+            h = height - y;
+        if (col == nCols - 1)
+            w = width - x;
+
+        return instack.crop(x, y, 0, w, h, nSlices);
+
+    }
+
+    synchronized public void putBlock(ImageStack instack, ImageStack out_image, int nRows, int nCols, int row, int col,
+            int rad) {
+        int width = out_image.getWidth();
+        int height = out_image.getHeight();
+        int nSlices = out_image.size();
+
+        int normBlockWidth = (int) Math.round(width / nCols);
+        int normBlockHeight = (int) Math.round(height / nRows);
+        int blockWidth = normBlockWidth;
+        int blockHeight = normBlockHeight;
+
+        int borderN = row == 0 ? 0 : rad;
+        int borderW = col == 0 ? 0 : rad;
+
+        if (row == nRows - 1) 
+            blockHeight = blockHeight + (instack.getHeight() - blockHeight - borderN);
+        
+        if (col == nCols - 1)
+            blockWidth = blockWidth + (instack.getWidth() - blockWidth - borderW);
+
+        for (int x = 0; x < blockWidth; x++) {
+            for (int y = 0; y < blockHeight; y++) {
+                for (int z = 0; z < nSlices; z++) {
+                    double val = instack.getVoxel(x + borderW, y + borderN, z);
+                    out_image.setVoxel(col * normBlockWidth + x, row * normBlockHeight + y, z, val);
+                }
+            }
+        }
+    }
+
+    public void processFilter(ImageStack inStack, ImageStack outStack, String selected_filter, int rad) {
         switch (selected_filter) {
             case "Mean":
-                Filter3Dmean mean = new Filter3Dmean(instack, out_image, rad);
+                Filter3Dmean mean = new Filter3Dmean(inStack, outStack, rad);
                 mean.filter();
                 break;
             case "Minimum": {
-                Filter3Dmin min = new Filter3Dmin(instack, out_image, rad);
+                Filter3Dmin min = new Filter3Dmin(inStack, outStack, rad);
                 min.filter();
-
                 break;
             }
             case "Maximum": {
-                Filter3Dmax max = new Filter3Dmax(instack, out_image, rad);
+                Filter3Dmax max = new Filter3Dmax(inStack, outStack, rad);
                 max.filter();
 
                 break;
             }
             case "MaximumLocal": {
-                Filter3DmaxLocal max = new Filter3DmaxLocal(instack, out_image, rad);
+                Filter3DmaxLocal max = new Filter3DmaxLocal(inStack, outStack, rad);
                 max.filter();
-                break;
-            }
-            case "TopHat": {
-                Filter3Dmin min = new Filter3Dmin(instack, out_image, rad);
-                min.filter();
-                // MAXIMUM
-                ImageShort out3d2 = new ImageShort("out3d2", instack.getWidth(), instack.getHeight(), instack.getSize());
-                ImageStack out_image2 = out3d2.getImageStack();
-                Filter3Dmax max = new Filter3Dmax(out_image, out_image2, rad);
-                max.filter();
-
-                StackProcessor stackprocess = new StackProcessor(out_image2, null);
-                stackprocess.copyBits(orig, 0, 0, Blitter.SUBTRACT);
                 break;
             }
         }
-        ImagePlus out_plus = new ImagePlus(filters[filter], out_image);
-        out_plus.setCalibration(calibration);
-        out_plus.show();
     }
 
     @Override
@@ -185,10 +265,9 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
         Vector fields = gd.getNumericFields();
         Vector fieldsb = gd.getCheckboxes();
         xy = ((Checkbox) fieldsb.elementAt(0)).getState();
-        //System.out.println("" + voisx + " " + voisy + " " + voisz);
-        //NumberFormat nf = NumberFormat.getInstance(Locale.ENGLISH);
-        //nf.setMaximumFractionDigits(3);
-
+        // System.out.println("" + voisx + " " + voisy + " " + voisz);
+        // NumberFormat nf = NumberFormat.getInstance(Locale.ENGLISH);
+        // nf.setMaximumFractionDigits(3);
 
         try {
             if ((e != null) && (!gd.invalidNumber())) {
@@ -197,7 +276,8 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
                     case 0:
                         double v0 = Double.valueOf(((TextField) fields.elementAt(0)).getText());
                         if (v0 != uvoisx) {
-                            ((TextField) fields.elementAt(1)).setText(Integer.toString((int) Math.round(v0 / calibration.pixelWidth)));
+                            ((TextField) fields.elementAt(1))
+                                    .setText(Integer.toString((int) Math.round(v0 / calibration.pixelWidth)));
                             uvoisx = v0;
                             voisx = (int) Math.round(v0 / calibration.pixelWidth);
                             if (xy) {
@@ -208,7 +288,6 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
                             }
                         }
                         break;
-
 
                     case 1:
                         int v1 = Integer.valueOf(((TextField) fields.elementAt(1)).getText());
@@ -228,7 +307,8 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
                     case 2:
                         double v3 = Double.valueOf(((TextField) fields.elementAt(2)).getText());
                         if (v3 != uvoisy) {
-                            ((TextField) fields.elementAt(3)).setText(Integer.toString((int) Math.round(v3 / calibration.pixelHeight)));
+                            ((TextField) fields.elementAt(3))
+                                    .setText(Integer.toString((int) Math.round(v3 / calibration.pixelHeight)));
                             uvoisy = v3;
                             voisy = (int) Math.round(v3 / calibration.pixelHeight);
                             if (xy) {
@@ -239,7 +319,6 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
                             }
                         }
                         break;
-
 
                     case 3:
                         int v2 = Integer.valueOf(((TextField) fields.elementAt(3)).getText());
@@ -259,7 +338,8 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
                     case 4:
                         double v4 = Double.valueOf(((TextField) fields.elementAt(4)).getText());
                         if (v4 != uvoisz) {
-                            ((TextField) fields.elementAt(5)).setText(Integer.toString((int) Math.round(v4 / calibration.pixelDepth)));
+                            ((TextField) fields.elementAt(5))
+                                    .setText(Integer.toString((int) Math.round(v4 / calibration.pixelDepth)));
                             uvoisz = v4;
                             voisz = (int) Math.round(v4 / calibration.pixelDepth);
                         }
@@ -276,7 +356,7 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
                         break;
                 }
             }
-            //if (!gd.invalidNumber()) ;
+            // if (!gd.invalidNumber()) ;
         } catch (NumberFormatException nfe) {
             IJ.log(nfe.getMessage());
         }
@@ -305,6 +385,8 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
         gd.addMessage("Parallelization", new Font("Arial", Font.BOLD, 12));
         gd.addChoice("Algorithm", algos, algos[algo]);
         gd.addSlider("Nb_cpus", 1, ThreadUtil.getNbCpus(), ThreadUtil.getNbCpus());
+        gd.addNumericField("Nb_rows", nRows, 0);
+        gd.addNumericField("Nb_cols", nCols, 0);
         if (!IJ.macroRunning()) {
             gd.addDialogListener(this);
         }
@@ -319,6 +401,8 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
         voisz = (int) gd.getNextNumber();
         algo = gd.getNextChoiceIndex();
         nbcpus = (int) gd.getNextNumber();
+        nRows = (int) gd.getNextNumber();
+        nCols = (int) gd.getNextNumber();
 
         return (!gd.wasCanceled());
     }
@@ -359,7 +443,7 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
 
     private ImagePlus extractCurrentStack(ImagePlus plus) {
         // check dimensions
-        int[] dims = plus.getDimensions();//XYCZT
+        int[] dims = plus.getDimensions();// XYCZT
         int channel = plus.getChannel();
         int frame = plus.getFrame();
         ImagePlus stack;
@@ -368,7 +452,8 @@ public class Fast_filters3D implements PlugInFilter, DialogListener {
             IJ.log("Hyperstack found, extracting current channel " + channel + " and frame " + frame);
             Duplicator duplicator = new Duplicator();
             stack = duplicator.run(plus, channel, channel, 1, dims[3], frame, frame);
-        } else stack = plus.duplicate();
+        } else
+            stack = plus.duplicate();
 
         return stack;
     }
